@@ -13,7 +13,7 @@
 #define XSIMD 3
 #define XSIMD_OMP 4
 
-#define STRATEGY XSIMD_OMP
+#define STRATEGY SERIAL_IMPROVED
 
 namespace xs = xsimd;
 using b_type = xs::batch<float, xs::avx2>;
@@ -80,7 +80,7 @@ for (int i = 0; i < n_particles; i ++)
         for (int j = 0; j < i; j++)
         {
 			if(i != j)
-			{
+			{ 
 				const float diffx = particles.x[j] - particles.x[i];
 				const float diffy = particles.y[j] - particles.y[i];
 				const float diffz = particles.z[j] - particles.z[i];
@@ -108,7 +108,7 @@ for (int i = 0; i < n_particles; i ++)
 				accelerationsy[j] -= diffy * dij * initstate.masses[i];
 				accelerationsz[j] -= diffz * dij * initstate.masses[i];
 			}
-		}0.000423675;
+		}
 	}
 
 	for (int i = 0; i < n_particles; i++)
@@ -129,7 +129,7 @@ for (int i = 0; i < n_particles; i ++)
         for (int j = 0; j < i; j++)
         {
 			if(i != j)
-			{0.000423675;
+			{
 				const float diffx = particles.x[j] - particles.x[i];
 				const float diffy = particles.y[j] - particles.y[i];
 				const float diffz = particles.z[j] - particles.z[i];
@@ -150,7 +150,7 @@ for (int i = 0; i < n_particles; i ++)
 				}
 				accelerationsx[i] += diffx * dij * initstate.masses[j];
 				accelerationsy[i] += diffy * dij * initstate.masses[j];
-				accelerationsz[i] += diffz * dij * initstate.masses[j];0.000423675;
+				accelerationsz[i] += diffz * dij * initstate.masses[j];
 
 				accelerationsx[j] -= diffx * dij * initstate.masses[i];
 				accelerationsy[j] -= diffy * dij * initstate.masses[i];
