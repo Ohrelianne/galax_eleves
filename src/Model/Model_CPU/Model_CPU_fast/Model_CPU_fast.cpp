@@ -13,7 +13,7 @@
 #define XSIMD 3
 #define XSIMD_OMP 4
 
-#define STRATEGY SERIAL_IMPROVED
+#define STRATEGY XSIMD
 
 namespace xs = xsimd;
 using b_type = xs::batch<float, xs::avx2>;
@@ -79,37 +79,33 @@ for (int i = 0; i < n_particles; i ++)
     {
         for (int j = 0; j < i; j++)
         {
-			if(i != j)
-			{ 
-				const float diffx = particles.x[j] - particles.x[i];
-				const float diffy = particles.y[j] - particles.y[i];
-				const float diffz = particles.z[j] - particles.z[i];
+			const float diffx = particles.x[j] - particles.x[i];
+			const float diffy = particles.y[j] - particles.y[i];
+			const float diffz = particles.z[j] - particles.z[i];
 
-				float dij = diffx * diffx + diffy * diffy + diffz * diffz;
+			float dij = diffx * diffx + diffy * diffy + diffz * diffz;
 
-				if (dij < 1.0)
-				{
-					dij = 10.0;
-				}
-				else
-				{
-					__m256 x_vec = _mm256_set1_ps(dij); // Passage en vecteur AVX
-					__m256 inv_sqrt_x_vec = _mm256_rsqrt_ps(x_vec); // Calcul de l'inverse de la racine carrée
-					inv_sqrt_x_vec = _mm256_mul_ps(inv_sqrt_x_vec,_mm256_mul_ps(inv_sqrt_x_vec,inv_sqrt_x_vec));// Multiplication
-					float inv_sqrt_x = _mm256_cvtss_f32(inv_sqrt_x_vec);//reconversion en float
-					dij = 10.0 * inv_sqrt_x;
-				}
-				
-				accelerationsx[i] += diffx * dij * initstate.masses[j];
-				accelerationsy[i] += diffy * dij * initstate.masses[j];
-				accelerationsz[i] += diffz * dij * initstate.masses[j];
-
-                accelerationsx[j] -= diffx * dij * initstate.masses[i];
-				accelerationsy[j] -= diffy * dij * initstate.masses[i];
-				accelerationsz[j] -= diffz * dij * initstate.masses[i];
+			if (dij < 1.0)
+			{
+				dij = 10.0;
+			}
+			else
+			{
+				__m256 x_vec = _mm256_set1_ps(dij); // Passage en vecteur AVX
+				__m256 inv_sqrt_x_vec = _mm256_rsqrt_ps(x_vec); // Calcul de l'inverse de la racine carrée
+				inv_sqrt_x_vec = _mm256_mul_ps(inv_sqrt_x_vec,_mm256_mul_ps(inv_sqrt_x_vec,inv_sqrt_x_vec));// Multiplication
+				float inv_sqrt_x = _mm256_cvtss_f32(inv_sqrt_x_vec);//reconversion en float
+				dij = 10.0 * inv_sqrt_x;
+			}
+			
+			accelerationsx[i] += diffx * dij * initstate.masses[j];
+			accelerationsy[i] += diffy * dij * initstate.masses[j];
+			accelerationsz[i] += diffz * dij * initstate.masses[j];
+            accelerationsx[j] -= diffx * dij * initstate.masses[i];
+			accelerationsy[j] -= diffy * dij * initstate.masses[i];
+			accelerationsz[j] -= diffz * dij * initstate.masses[i];
 			}
 		}
-	}
 
 	for (int i = 0; i < n_particles; i++)
 	{
@@ -171,7 +167,9 @@ for (int i = 0; i < n_particles; i ++)
 
 #elif STRATEGY == XSIMD
 
-    for (int i = 0; i < n_particles; i += b_type::size)
+std::size_t inc = b_type::size;
+std::size_t vec_size = n_particles - n_particles % inc;
+    for (int i = 0; i < vec_size; i += inc)
     {
         // load registers body i
         const b_type rposx_i = b_type::load_unaligned(&particles.x[i]);
@@ -205,7 +203,41 @@ for (int i = 0; i < n_particles; i ++)
 
 		}
     }
+	for (std::size_t i = vec_size; i<n_particles; i++)
+	{
+		for (int j = 0; j < i; j++)
+        {
+			if(i != j)
+			{
+				const float diffx = particles.x[j] - particles.x[i];
+				const float diffy = particles.y[j] - particles.y[i];
+				const float diffz = particles.z[j] - particles.z[i];
 
+				float dij = diffx * diffx + diffy * diffy + diffz * diffz;
+
+				if (dij < 1.0)
+				{
+					dij = 10.0;
+				}
+				else
+				{
+					__m256 x_vec = _mm256_set1_ps(dij);
+					__m256 inv_sqrt_x_vec = _mm256_rsqrt_ps(x_vec);
+					inv_sqrt_x_vec = _mm256_mul_ps(inv_sqrt_x_vec,_mm256_mul_ps(inv_sqrt_x_vec,inv_sqrt_x_vec));
+					float inv_sqrt_x = _mm256_cvtss_f32(inv_sqrt_x_vec);
+					dij = 10.0 * inv_sqrt_x;
+				}
+				accelerationsx[i] += diffx * dij * initstate.masses[j];
+				accelerationsy[i] += diffy * dij * initstate.masses[j];
+				accelerationsz[i] += diffz * dij * initstate.masses[j];
+
+				accelerationsx[j] -= diffx * dij * initstate.masses[i];
+				accelerationsy[j] -= diffy * dij * initstate.masses[i];
+				accelerationsz[j] -= diffz * dij * initstate.masses[i];
+			}
+		}
+
+	}
 	for (int i = 0; i < n_particles; i++)
 	{
 		velocitiesx[i] += accelerationsx[i] * 2.0f;
@@ -217,8 +249,10 @@ for (int i = 0; i < n_particles; i ++)
 	}
 
 #elif STRATEGY == XSIMD_OMP
+std::size_t inc = b_type::size;
+std::size_t vec_size = n_particles - n_particles % inc;
 #pragma omp parallel for simd
-    for (int i = 0; i < n_particles; i += b_type::size)
+    for (int i = 0; i < vec_size; i += inc)
     {
         // load registers body i
         const b_type rposx_i = b_type::load_unaligned(&particles.x[i]);
@@ -252,6 +286,43 @@ for (int i = 0; i < n_particles; i ++)
 
 		}
     }
+
+	#pragma omp parallel for
+	for (std::size_t i = vec_size; i<n_particles; i++)
+	{
+		for (int j = 0; j < i; j++)
+        {
+			if(i != j)
+			{
+				const float diffx = particles.x[j] - particles.x[i];
+				const float diffy = particles.y[j] - particles.y[i];
+				const float diffz = particles.z[j] - particles.z[i];
+
+				float dij = diffx * diffx + diffy * diffy + diffz * diffz;
+
+				if (dij < 1.0)
+				{
+					dij = 10.0;
+				}
+				else
+				{
+					__m256 x_vec = _mm256_set1_ps(dij);
+					__m256 inv_sqrt_x_vec = _mm256_rsqrt_ps(x_vec);
+					inv_sqrt_x_vec = _mm256_mul_ps(inv_sqrt_x_vec,_mm256_mul_ps(inv_sqrt_x_vec,inv_sqrt_x_vec));
+					float inv_sqrt_x = _mm256_cvtss_f32(inv_sqrt_x_vec);
+					dij = 10.0 * inv_sqrt_x;
+				}
+				accelerationsx[i] += diffx * dij * initstate.masses[j];
+				accelerationsy[i] += diffy * dij * initstate.masses[j];
+				accelerationsz[i] += diffz * dij * initstate.masses[j];
+
+				accelerationsx[j] -= diffx * dij * initstate.masses[i];
+				accelerationsy[j] -= diffy * dij * initstate.masses[i];
+				accelerationsz[j] -= diffz * dij * initstate.masses[i];
+			}
+		}
+
+	}
 #pragma omp parallel for
 	for (int i = 0; i < n_particles; i++)
 	{
