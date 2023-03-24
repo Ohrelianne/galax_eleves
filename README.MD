@@ -478,18 +478,17 @@ Résultats :
 
 # Boite à idée
 
+::: success
 Changer les calculs pour des calculs plus rapide, exemple : \*2 -> shift, calcul de l'inverse de la racine (fast inverse square root)
 
-::: success
 Attraction i -> j = - attraction j -> i
-
-:::
 
 Deux particules très éloignées ont peu d'influence l'une sur l'autre mais le calcul sqrt est quand même fait
 
 Coupler le SIMD et le TLP avec l'instruction pragma omp for simd
 
 Regardez !  la galaxie s'enfuie
+:::
 
 ## Ressources
 
