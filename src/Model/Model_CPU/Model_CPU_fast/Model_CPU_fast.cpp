@@ -15,14 +15,18 @@
 #define XSIMD_OMP 4
 #define XSIMD_OMP_OPTI 5
 
+//SELECT THE STRATEGY YOU WANT TO USE
 #define STRATEGY XSIMD_OMP_OPTI
 
 namespace xs = xsimd;
 using b_type = xs::batch<float, xs::avx2>;
-
-
-
-
+struct Rot
+{
+	static constexpr unsigned get(unsigned i, unsigned n)
+	{
+		return (i + n - 1) % n;
+	}
+};
 Model_CPU_fast
 ::Model_CPU_fast(const Initstate& initstate, Particles& particles)
 : Model_CPU(initstate, particles)
@@ -36,6 +40,7 @@ std::vector<float> mask5={1.0,1.0,1.0,1.0,0.0,1.0,1.0,1.0};
 std::vector<float> mask6={1.0,1.0,1.0,1.0,1.0,0.0,1.0,1.0};
 std::vector<float> mask7={1.0,1.0,1.0,1.0,1.0,1.0,0.0,1.0};
 std::vector<float> mask8={1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.0};
+
 
 std::vector<std::vector<float>> masks= {mask1,mask2,mask3,mask4,mask5,mask6,mask7,mask8};
 
@@ -57,7 +62,30 @@ for (int i = 0; i < n_particles; i++)
 				const float diffy = particles.y[j] - particles.y[i];
 				const float diffz = particles.z[j] - particles.z[i];
 
-				float dij = diffx * diffx + diffy * diffy + diffz * diffz;
+				float dij = diffx * diffx + diffy * diffy + diffz * diffz;		for (std::size_t j = vec_size; j<n_particles; j++)
+		{
+			b_type diffx = particles.x[j] - rposx_i;
+			b_type diffy = particles.y[j] - rposy_i;
+			b_type diffz = particles.z[j] - rposz_i;	
+
+			b_type dij = diffx * diffx + diffy * diffy + diffz * diffz;	
+			
+			dij = xs::rsqrt(xs::max(once_v,dij)); //Il faut un batch de 1
+			dij = 10.0 * dij * dij * dij;
+			if (!((j < i) | (j>i+7))) {
+				b_type mask = b_type::load_unaligned(&masks[j-i][0]);
+				dij = dij * mask;
+			}
+
+			raccx_i = raccx_i + diffx * dij * initstate.masses[j];
+			raccy_i = raccy_i + diffy * dij * initstate.masses[j];
+			raccz_i = raccz_i + diffz * dij * initstate.masses[j];
+
+			raccx_i.store_unaligned(&accelerationsx[i]);
+			raccy_i.store_unaligned(&accelerationsy[i]);
+			raccz_i.store_unaligned(&accelerationsz[i]);
+    	}	
+	}
 
 				if (dij < 1.0)
 				{
@@ -355,6 +383,8 @@ std::size_t vec_size = n_particles - n_particles % inc;
 #elif STRATEGY == XSIMD_OMP_OPTI
 std::size_t inc = b_type::size;
 std::size_t vec_size = n_particles - n_particles % inc;
+auto constexpr mask = xs::make_batch_constant<xs::batch<uint32_t, xs::avx2>, Rot>();
+
 #pragma omp parallel for simd
     for (int i = 0; i < vec_size; i += inc)
     {
@@ -370,34 +400,35 @@ std::size_t vec_size = n_particles - n_particles % inc;
 
         for(int j=0; j<vec_size; j += inc){
 			if(i != j){
-				const b_type rposx_j = b_type::load_unaligned(&particles.x[j]);
-				const b_type rposy_j = b_type::load_unaligned(&particles.y[j]);
-				const b_type rposz_j = b_type::load_unaligned(&particles.z[j]);
-				const b_type mass_j = b_type::load_unaligned(&initstate.masses[j]);
+				b_type rposx_j = b_type::load_unaligned(&particles.x[j]);
+				b_type rposy_j = b_type::load_unaligned(&particles.y[j]);
+				b_type rposz_j = b_type::load_unaligned(&particles.z[j]);
+				b_type mass_j = b_type::load_unaligned(&initstate.masses[j]);
 				for(int k = 0; k <7; k++){
 					    
 						b_type diffx = rposx_j - rposx_i;
 						b_type diffy = rposy_j - rposy_i;
 						b_type diffz = rposz_j - rposz_i;	
-						rposx_j = xs::slide_right(rposx_j);
-						rposy_j = xs::slide_right(rposy_j);
-						rposz_j = xs::slide_right(rposz_j);
+						rposx_j = xs::swizzle(rposx_j,mask);
+						rposy_j = xs::swizzle(rposy_j,mask);
+						rposz_j = xs::swizzle(rposz_j,mask);
 
-						b_type dij = diffx * diffx + diffy * diffy + diffz * diffz;	
+						b_type dij = xs::fma(diffx,diffx,xs::fma(diffy,diffy, xs::mul(diffz,diffz)));	
 						
 						dij = xs::rsqrt(xs::max(once_v,dij)); //Il faut un batch de 1
 						dij = 10.0 * dij * dij * dij;
 
 
-						raccx_i = raccx_i + diffx * dij * mass_j;
-						raccy_i = raccy_i + diffy * dij * mass_j;
-						raccz_i = raccz_i + diffz * dij * mass_j;
+						raccx_i = xs::fma(dij * mass_j, diffx,raccx_i);
+						raccy_i = xs::fma(dij * mass_j, diffy,raccy_i);
+						raccz_i = xs::fma(dij * mass_j, diffz,raccz_i);
 
-						mass_j = xs::slide_right(mass_j);
+						mass_j = xs::swizzle(mass_j,mask);
 				}
-					raccx_i.store_unaligned(&accelerationsx[i]);
-					raccy_i.store_unaligned(&accelerationsy[i]);
-					raccz_i.store_unaligned(&accelerationsz[i]);
+				
+				raccx_i.store_unaligned(&accelerationsx[i]);
+				raccy_i.store_unaligned(&accelerationsy[i]);
+				raccz_i.store_unaligned(&accelerationsz[i]);
 				
 			}
 		}
@@ -407,7 +438,7 @@ std::size_t vec_size = n_particles - n_particles % inc;
 			b_type diffy = particles.y[j] - rposy_i;
 			b_type diffz = particles.z[j] - rposz_i;	
 
-			b_type dij = diffx * diffx + diffy * diffy + diffz * diffz;	
+			b_type dij = xs::fma(diffx,diffx,xs::fma(diffy,diffy, xs::mul(diffz,diffz)));		
 			
 			dij = xs::rsqrt(xs::max(once_v,dij)); //Il faut un batch de 1
 			dij = 10.0 * dij * dij * dij;
@@ -416,9 +447,9 @@ std::size_t vec_size = n_particles - n_particles % inc;
 				dij = dij * mask;
 			}
 
-			raccx_i = raccx_i + diffx * dij * initstate.masses[j];
-			raccy_i = raccy_i + diffy * dij * initstate.masses[j];
-			raccz_i = raccz_i + diffz * dij * initstate.masses[j];
+			raccx_i = xs::fma(dij * initstate.masses[i], diffx,raccx_i);
+			raccy_i = xs::fma(dij * initstate.masses[i], diffy,raccy_i);
+			raccz_i = xs::fma(dij * initstate.masses[i], diffz,raccz_i);
 
 			raccx_i.store_unaligned(&accelerationsx[i]);
 			raccy_i.store_unaligned(&accelerationsy[i]);
