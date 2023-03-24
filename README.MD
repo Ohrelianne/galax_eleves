@@ -425,16 +425,56 @@ L'idée est de passer le parcours dans la seconde boucle en chargeant les partic
 
 Il y a besoin de mettre à jour la librairie xsimd. (git checkout master, git pull, re-compiler)
 
-Voici le code réalisé : 
-
-```
-```
-
 ### Objectifs pour la prochaine séance
 
 Terminer le code pour la version xsimd améliorée
 
 Piste : utilisation de make_sized_batch
+
+# Séance 5 : 24 Mars
+
+## Amélioration du code xsimd
+
+Nous avons implémenté l'amélioration des accès mémoires, en utilisant des rotations :
+
+  
+```
+    struct Rot{
+	    static constexpr unsigned get(unsigned i, unsigned n){
+		    return (i+n-1)%n;
+		}
+	};
+	...
+	auto constexpr mask = xs::make_batch_constant<xs::batch<uint32_t,xs::avx2>, Rot>();
+	for(int i ...){
+		 ...
+		 for(int j ...){
+			 ...
+			 for(int k = 0; i<7; k++){
+				calcul;
+				rposx_j = xs::swizzle(rposx_j,mask);
+				...
+			}
+		...
+		}
+	}
+```
+	 
+Résultats :
+
+| Nombre de particules, nombre de threads | code de base (fps) | code parallélisé (fps) | gain en performances (%) |
+|-----------------------------------------|--------------------|------------------------|--------------------------|
+| 2000,2 | 27 | 950 | 3400% |
+| 2000,4 | 27 | 1800 | 6500% |
+| 2000,6 | 27 | 1000 | 3600% |
+| 6000,2 | 3\.7 | 93 | 2400% |
+| 6000,4 | 3\.7 | 170 | 4500% |
+| 6000,6 | 3\.7 | 130 | 3400% |
+| 10000,2 | 1\.38 | 40 | 2800% |
+| 10000,4 | 1\.38 | 76 | 5400% |
+| 10000,6 | 1\.38 | 60 | 4250% |
+
+
 
 # Boite à idée
 
